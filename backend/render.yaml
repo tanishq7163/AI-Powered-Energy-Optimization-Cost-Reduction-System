@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: energy-optimization-backend
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: DATABASE_URL
+        fromDatabase:
+          name: energy-optimization-db
+          property: connectionString
+      - key: APP_NAME
+        value: AI-Powered Energy Consumption Optimization & Cost Reduction System
+      - key: REPORTS_DIR
+        value: ../reports
+      - key: DATASET_DIR
+        value: ../dataset
+      - key: MODELS_DIR
+        value: ./models
+      - key: ALLOWED_ORIGINS
+        sync: false
+
+databases:
+  - name: energy-optimization-db
+    plan: free
