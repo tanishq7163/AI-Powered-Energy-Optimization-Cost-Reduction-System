@@ -5,13 +5,21 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import type { AggregatedPoint, ForecastPoint } from "@/lib/types";
 import { formatShortDate } from "@/lib/utils";
 
+type ConsumptionChartPoint = {
+  label: string;
+  value: number;
+  secondary?: number;
+  lower?: number;
+  upper?: number;
+};
+
 type ConsumptionLineChartProps = {
   data: AggregatedPoint[] | ForecastPoint[];
   mode: "aggregate" | "forecast";
 };
 
 export function ConsumptionLineChart({ data, mode }: ConsumptionLineChartProps) {
-  const chartData =
+  const chartData: ConsumptionChartPoint[] =
     mode === "aggregate"
       ? (data as AggregatedPoint[]).map((item) => ({
           label: formatShortDate(item.period),
