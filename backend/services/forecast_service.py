@@ -311,13 +311,14 @@ def generate_forecast(db: Session, horizon: str = "24h") -> ForecastResponse:
         scaler: StandardScaler = joblib.load(SCALER_PATH)
         lstm_model = keras.models.load_model(LSTM_MODEL_PATH)
         history = scaler.transform(frame[["energy_consumption_kwh"]]).flatten().tolist()
-        predictions = []
+        scaled_predictions = []
         for _ in range(periods):
-            window = np.array(history[-SEQUENCE_LENGTH:]).reshape((1, SEQUENCE_LENGTH, 1))
-            next_scaled = float(lstm_model.predict(window, verbose=0).flatten()[0])
+            window = np.array(history[-SEQUENCE_LENGTH:], dtype="float32").reshape((1, SEQUENCE_LENGTH, 1))
+            # Direct call avoids the per-step tf.function retracing/overhead of model.predict().
+            next_scaled = float(np.asarray(lstm_model(window, training=False)).flatten()[0])
             history.append(next_scaled)
-            next_value = float(scaler.inverse_transform(np.array([[next_scaled]])).flatten()[0])
-            predictions.append(next_value)
+            scaled_predictions.append(next_scaled)
+        predictions = scaler.inverse_transform(np.array(scaled_predictions).reshape(-1, 1)).flatten().tolist()
     elif best_model_name == "Prophet":
         prophet_model: Prophet = joblib.load(TRADITIONAL_MODEL_PATH)
         future = future_frame[["timestamp"]].rename(columns={"timestamp": "ds"})
@@ -327,30 +328,33 @@ def generate_forecast(db: Session, horizon: str = "24h") -> ForecastResponse:
         predictions = model.predict(future_frame[FEATURE_COLUMNS]).tolist()
 
     forecast_points = []
+    forecast_rows = []
     db.query(Forecast).filter(Forecast.horizon == horizon).delete()
     db.commit()
 
     for timestamp, prediction in zip(future_frame["timestamp"], predictions, strict=True):
         lower_bound = max(float(prediction) - residual_std * 1.96, 0)
         upper_bound = float(prediction) + residual_std * 1.96
+        point_time = pd.to_datetime(timestamp).to_pydatetime()
         forecast_points.append(
             ForecastPoint(
-                timestamp=pd.to_datetime(timestamp).to_pydatetime(),
+                timestamp=point_time,
                 predicted_consumption_kwh=round(float(prediction), 3),
                 lower_bound=round(lower_bound, 3),
                 upper_bound=round(upper_bound, 3),
             )
         )
-        db.add(
+        forecast_rows.append(
             Forecast(
                 model_name=best_model_name,
                 horizon=horizon,
-                forecast_time=pd.to_datetime(timestamp).to_pydatetime(),
+                forecast_time=point_time,
                 predicted_consumption_kwh=float(prediction),
                 lower_bound=lower_bound,
                 upper_bound=upper_bound,
             )
         )
+    db.add_all(forecast_rows)
     db.commit()
 
     return ForecastResponse(

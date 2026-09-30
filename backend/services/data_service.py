@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import UploadFile
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from db.database import MODELS_DIR
@@ -26,7 +26,30 @@ MODEL_ARTIFACT_PATHS = [
 ]
 
 
+# Cached cleaned dataframe keyed by (row count, max id, max timestamp, date filters).
+# Analytics, forecasting, anomaly, cost and recommendation services all request the same
+# frame during a single report run; recomputing the preprocessing pass each time dominated runtime.
+_RECORDS_CACHE: dict[tuple, pd.DataFrame] = {}
+
+
+def _records_fingerprint(db: Session) -> tuple:
+    return tuple(
+        db.execute(
+            select(
+                func.count(EnergyRecord.id),
+                func.max(EnergyRecord.id),
+                func.max(EnergyRecord.timestamp),
+            )
+        ).one()
+    )
+
+
+def clear_records_cache() -> None:
+    _RECORDS_CACHE.clear()
+
+
 def invalidate_derived_state(db: Session) -> None:
+    clear_records_cache()
     for artifact_path in MODEL_ARTIFACT_PATHS:
         if artifact_path.exists():
             artifact_path.unlink()
@@ -61,6 +84,7 @@ def ingest_upload(db: Session, upload_file: UploadFile) -> dict:
 
 
 def persist_dataframe(db: Session, frame: pd.DataFrame) -> None:
+    clear_records_cache()
     records = []
     for row in frame.to_dict(orient="records"):
         records.append(
@@ -125,8 +149,36 @@ def load_records_dataframe(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> pd.DataFrame:
-    statement = select(EnergyRecord).order_by(EnergyRecord.timestamp.asc())
-    records = list(db.scalars(statement))
+    cache_key = (_records_fingerprint(db), start_date, end_date)
+    cached = _RECORDS_CACHE.get(cache_key)
+    if cached is not None:
+        return cached.copy()
+
+    frame = _build_records_dataframe(db, start_date, end_date)
+    _RECORDS_CACHE.clear()
+    _RECORDS_CACHE[cache_key] = frame
+    return frame.copy()
+
+
+def _build_records_dataframe(
+    db: Session,
+    start_date: date | None,
+    end_date: date | None,
+) -> pd.DataFrame:
+    statement = select(
+        EnergyRecord.id,
+        EnergyRecord.date,
+        EnergyRecord.timestamp,
+        EnergyRecord.energy_consumption_kwh,
+        EnergyRecord.voltage,
+        EnergyRecord.current,
+        EnergyRecord.power_factor,
+        EnergyRecord.tariff_rate,
+        EnergyRecord.temperature,
+        EnergyRecord.occupancy,
+        EnergyRecord.device_name,
+    ).order_by(EnergyRecord.timestamp.asc())
+    records = db.execute(statement).all()
     if not records:
         return pd.DataFrame(columns=[
             "id",
@@ -142,24 +194,7 @@ def load_records_dataframe(
             "device_name",
         ])
 
-    frame = pd.DataFrame(
-        [
-            {
-                "id": record.id,
-                "date": record.date,
-                "timestamp": record.timestamp,
-                "energy_consumption_kwh": record.energy_consumption_kwh,
-                "voltage": record.voltage,
-                "current": record.current,
-                "power_factor": record.power_factor,
-                "tariff_rate": record.tariff_rate,
-                "temperature": record.temperature,
-                "occupancy": record.occupancy,
-                "device_name": record.device_name,
-            }
-            for record in records
-        ]
-    )
+    frame = pd.DataFrame(records, columns=list(records[0]._fields))
 
     frame["timestamp"] = pd.to_datetime(frame["timestamp"])
     if start_date is not None:

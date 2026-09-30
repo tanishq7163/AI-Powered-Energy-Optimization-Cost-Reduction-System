@@ -68,16 +68,18 @@ def detect_anomalies(db: Session) -> AnomalyResponse:
     db.commit()
 
     items: list[AnomalyItem] = []
+    anomaly_rows: list[Anomaly] = []
     for _, row in anomalies_frame.sort_values("combined_score", ascending=False).head(150).iterrows():
         severity_level = severity(float(row["combined_score"]))
+        row_time = pd.to_datetime(row["timestamp"]).to_pydatetime()
         description = (
             f"{row['device_name']} consumed {row['energy_consumption_kwh']:.2f} kWh at "
-            f"{pd.to_datetime(row['timestamp']).strftime('%Y-%m-%d %H:%M')} which deviates from the learned profile."
+            f"{row_time.strftime('%Y-%m-%d %H:%M')} which deviates from the learned profile."
         )
-        db.add(
+        anomaly_rows.append(
             Anomaly(
                 record_id=int(row["id"]) if "id" in row and not pd.isna(row["id"]) else None,
-                timestamp=pd.to_datetime(row["timestamp"]).to_pydatetime(),
+                timestamp=row_time,
                 method="Isolation Forest + LOF",
                 anomaly_score=float(row["combined_score"]),
                 severity_level=severity_level,
@@ -86,7 +88,7 @@ def detect_anomalies(db: Session) -> AnomalyResponse:
         )
         items.append(
             AnomalyItem(
-                timestamp=pd.to_datetime(row["timestamp"]).to_pydatetime(),
+                timestamp=row_time,
                 device_name=str(row["device_name"]),
                 energy_consumption_kwh=round(float(row["energy_consumption_kwh"]), 3),
                 anomaly_score=round(float(row["combined_score"]), 4),
@@ -95,10 +97,11 @@ def detect_anomalies(db: Session) -> AnomalyResponse:
                 method="Isolation Forest + LOF",
             )
         )
+    db.add_all(anomaly_rows)
     db.commit()
 
     severity_breakdown = (
-        pd.DataFrame([item.model_dump() for item in items])["severity_level"]
+        pd.Series([item.severity_level for item in items])
         .value_counts()
         .rename_axis("severity")
         .reset_index(name="count")
