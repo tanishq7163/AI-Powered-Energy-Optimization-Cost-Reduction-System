@@ -57,7 +57,7 @@ export default function ReportsPage() {
                 </div>
                 <a
                   href={downloadUrl(`/reports/download?path=${encodeURIComponent(report.file_path)}`)}
-                  className="inline-flex h-11 items-center justify-center rounded-full bg-[#16324f] px-5 text-sm font-semibold text-white"
+                  className="inline-flex h-11 items-center justify-center rounded-full bg-[#16324f] px-5 text-sm font-semibold text-whitesmoke"
                 >
                   Download report
                 </a>
