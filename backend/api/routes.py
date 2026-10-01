@@ -132,7 +132,7 @@ def costs(db: Session = Depends(get_db)):
     return get_cost_summary(db)
 
 
-@router.post("/recommendations/generate", response_model=RecommendationResponse)
+@router.get("/recommendations/generate", response_model=RecommendationResponse)
 def recommendations(db: Session = Depends(get_db)):
     return generate_recommendations(db)
 
