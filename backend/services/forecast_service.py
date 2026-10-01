@@ -330,7 +330,6 @@ def generate_forecast(db: Session, horizon: str = "24h") -> ForecastResponse:
     forecast_points = []
     forecast_rows = []
     db.query(Forecast).filter(Forecast.horizon == horizon).delete()
-    db.commit()
 
     for timestamp, prediction in zip(future_frame["timestamp"], predictions, strict=True):
         lower_bound = max(float(prediction) - residual_std * 1.96, 0)

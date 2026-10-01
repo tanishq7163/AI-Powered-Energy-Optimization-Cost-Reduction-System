@@ -33,9 +33,14 @@ def get_cost_summary(db: Session) -> CostSummary:
 
     peak_cost = frame[frame["hour"].between(17, 22)]["cost"].sum()
     total_cost = frame["cost"].sum()
-    forecast_rows = db.query(Forecast).order_by(Forecast.forecast_time.asc()).all()
-    recent_tariff = float(frame["tariff_rate"].tail(24).mean())
-    forecast_cost = sum(item.predicted_consumption_kwh * recent_tariff for item in forecast_rows)
+    forecast_points = (
+        db.query(Forecast.forecast_time, Forecast.predicted_consumption_kwh)
+        .order_by(Forecast.forecast_time.asc())
+        .all()
+    )
+    recent_tariff = float(frame["tariff_rate"].tail(24).mean()) if not frame.empty else 0.0
+    forecast_energy = float(sum(row[1] for row in forecast_points))
+    forecast_cost = forecast_energy * recent_tariff
     potential_savings = peak_cost * 0.16 + monthly_slice[monthly_slice["occupancy"] < 10]["cost"].sum() * 0.09
 
     breakdown = (
@@ -53,11 +58,11 @@ def get_cost_summary(db: Session) -> CostSummary:
         ("monthly", monthly_slice),
     ]
     db.query(CostEstimation).delete()
-    db.commit()
+    cost_records = []
     for period_type, slice_frame in snapshots:
         if slice_frame.empty:
             continue
-        db.add(
+        cost_records.append(
             CostEstimation(
                 period_type=period_type,
                 period_start=pd.to_datetime(slice_frame["timestamp"].min()).to_pydatetime(),
@@ -69,19 +74,21 @@ def get_cost_summary(db: Session) -> CostSummary:
                 forecasted=False,
             )
         )
-    if forecast_rows:
-        db.add(
+    if forecast_points:
+        cost_records.append(
             CostEstimation(
                 period_type="forecast",
-                period_start=forecast_rows[0].forecast_time,
-                period_end=forecast_rows[-1].forecast_time,
-                energy_kwh=float(sum(item.predicted_consumption_kwh for item in forecast_rows)),
+                period_start=forecast_points[0][0],
+                period_end=forecast_points[-1][0],
+                energy_kwh=forecast_energy,
                 estimated_cost=float(forecast_cost),
                 peak_cost_contribution=float(peak_cost / total_cost) if total_cost else 0,
                 potential_savings=float(potential_savings),
                 forecasted=True,
             )
         )
+    if cost_records:
+        db.add_all(cost_records)
     db.commit()
 
     return CostSummary(

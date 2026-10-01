@@ -96,9 +96,7 @@ def generate_recommendations(db: Session) -> RecommendationResponse:
         )
 
     db.query(Recommendation).delete()
-    db.commit()
-    for item in recommendations:
-        db.add(Recommendation(**item.model_dump()))
+    db.add_all([Recommendation(**item.model_dump()) for item in recommendations])
     db.commit()
 
     return RecommendationResponse(generated_at=datetime.utcnow(), recommendations=recommendations)

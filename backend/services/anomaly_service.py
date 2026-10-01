@@ -65,7 +65,6 @@ def detect_anomalies(db: Session) -> AnomalyResponse:
         return "Low"
 
     db.query(Anomaly).delete()
-    db.commit()
 
     items: list[AnomalyItem] = []
     anomaly_rows: list[Anomaly] = []
